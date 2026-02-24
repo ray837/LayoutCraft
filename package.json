@@ -8,9 +8,13 @@
     "start": "next start"
   },
   "dependencies": {
+    "konva": "^10.2.0",
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "react-konva": "^19.2.2",
+    "uuid": "^13.0.0",
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
