@@ -13,12 +13,18 @@ import {
 } from "react-konva";
 import { useEffect, useRef, useState } from "react";
 import { v4 as uuid } from "uuid";
+import {
+  BED_STATUS_OPTIONS,
+  getBedVisualStyle,
+  getCanonicalBedStatus,
+} from "@/components/layout-viewer/bed-status-style";
 
 const SNAP_PX = 14;
 const MIN_WALL_LENGTH = 10;
 const WALL_THICKNESS = 14;
 const AXIS_LOCK_THRESHOLD = 6;
 const MIN_TABLE_SIZE_PX = 40;
+const MIN_ROOM_LABEL_SIZE_PX = 18;
 const DINING_SHAPES = new Set(["rectangle", "square", "circle"]);
 
 const toNormPoint = (point, size) => ({
@@ -35,6 +41,10 @@ const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const cloneItems = (items) => items.map((item) => ({ ...item }));
 const toSeatingShape = (shape) => (shape === "circle" ? "round" : "rect");
 const isDiningShape = (shape) => DINING_SHAPES.has(shape);
+const isBedShape = (shape) => shape === "bed";
+const isRoomLabelShape = (shape) => shape === "room-label";
+const getMinSizePxForShape = (shape) =>
+  isRoomLabelShape(shape) ? MIN_ROOM_LABEL_SIZE_PX : MIN_TABLE_SIZE_PX;
 const getSeatPositions = ({ x, y, width, height, shape, seats }) => {
   const safeSeats = Math.max(1, seats || 4);
   const points = [];
@@ -68,6 +78,7 @@ export default function FloorEditor() {
   const transformerRef = useRef(null);
   const tableRefs = useRef({});
   const dragBatchRef = useRef(null);
+  const importInputRef = useRef(null);
   const [size, setSize] = useState({ width: 800, height: 600 });
 
   const [tables, setTables] = useState([]);
@@ -76,10 +87,12 @@ export default function FloorEditor() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [copiedTables, setCopiedTables] = useState([]);
   const [selectionRect, setSelectionRect] = useState(null);
+  const [importError, setImportError] = useState("");
   const [mode, setMode] = useState("select");
   const [draftWall, setDraftWall] = useState(null);
   const selectedTables = tables.filter((t) => selectedIds.includes(t.id));
   const singleSelectedTable = selectedTables.length === 1 ? selectedTables[0] : null;
+  const [labelInput, setLabelInput] = useState("");
   const canUngroup = selectedTables.some((t) => t.groupId);
   const useMergedWallRender = mode !== "draw-wall";
 
@@ -116,6 +129,22 @@ export default function FloorEditor() {
     transformer.getLayer()?.batchDraw();
   }, [selectedIds, mode, tables]);
 
+  useEffect(() => {
+    if (!singleSelectedTable) {
+      setLabelInput("");
+      return;
+    }
+    if (isBedShape(singleSelectedTable.shape)) {
+      setLabelInput(String(singleSelectedTable.bedNumber ?? ""));
+      return;
+    }
+    if (isRoomLabelShape(singleSelectedTable.shape)) {
+      setLabelInput(String(singleSelectedTable.roomLabel ?? ""));
+      return;
+    }
+    setLabelInput(String(singleSelectedTable.customLabel ?? ""));
+  }, [singleSelectedTable]);
+
   const addTable = (shape = "rectangle") => {
     const baseByShape = {
       rectangle: { width: 0.18, height: 0.12 },
@@ -123,8 +152,26 @@ export default function FloorEditor() {
       circle: { width: 0.12, height: 0.12 },
       bed: { width: 0.22, height: 0.12 },
       stairs: { width: 0.18, height: 0.16 },
+      "room-label": { width: 0.1, height: 0.05 },
     };
     const base = baseByShape[shape] || baseByShape.rectangle;
+    const nextBedNumber =
+      Math.max(
+        0,
+        ...tables
+          .filter((item) => isBedShape(item.shape))
+          .map((item) => Number(item.bedNumber) || 0)
+      ) + 1;
+    const nextRoomNumber =
+      Math.max(
+        0,
+        ...tables
+          .filter((item) => isRoomLabelShape(item.shape))
+          .map((item) => {
+            const match = String(item.roomLabel || "").match(/\d+/);
+            return match ? Number(match[0]) : 0;
+          })
+      ) + 1;
 
     setHistory((prev) => [...prev, { tables: cloneItems(tables), walls: cloneItems(walls) }]);
     setTables((prev) => [
@@ -139,6 +186,10 @@ export default function FloorEditor() {
         rotation: 0,
         groupId: null,
         seats: isDiningShape(shape) ? 4 : 0,
+        bedNumber: isBedShape(shape) ? String(nextBedNumber) : "",
+        bedStatus: isBedShape(shape) ? "Vacant" : "",
+        roomLabel: isRoomLabelShape(shape) ? `Room ${nextRoomNumber}` : "",
+        customLabel: "",
       },
     ]);
   };
@@ -173,6 +224,70 @@ export default function FloorEditor() {
     x2: Math.max(rect.x1, rect.x2),
     y2: Math.max(rect.y1, rect.y2),
   });
+
+  const convertSeatingTableToEditorTable = (table) => {
+    const shape = table.shape === "round" ? "circle" : "rectangle";
+    const width =
+      table.shape === "round" ? (table?.size?.r || 0.06) * 2 : table?.size?.w || 0.18;
+    const height =
+      table.shape === "round" ? (table?.size?.r || 0.06) * 2 : table?.size?.h || 0.12;
+
+    return {
+      id: table.id || uuid(),
+      shape,
+      x: table?.pos?.x || 0.4,
+      y: table?.pos?.y || 0.4,
+      width,
+      height,
+      rotation: table.rotation || 0,
+      groupId: null,
+      seats: table.seats ?? 4,
+    };
+  };
+
+  const normalizeImportedLayout = (raw) => {
+    const editorTables = Array.isArray(raw?.editor?.tables) ? raw.editor.tables : [];
+    const seatingTables = Array.isArray(raw?.tables) ? raw.tables : [];
+    const tablesToUse =
+      editorTables.length > 0
+        ? editorTables
+        : seatingTables.map(convertSeatingTableToEditorTable);
+
+    const editorWalls = Array.isArray(raw?.editor?.walls) ? raw.editor.walls : [];
+    const wallsToUse = editorWalls.length > 0 ? editorWalls : Array.isArray(raw?.walls) ? raw.walls : [];
+
+    const sanitizedTables = tablesToUse.map((table) => ({
+      id: table.id || uuid(),
+      shape: table.shape || "rectangle",
+      x: Number(table.x ?? 0.4),
+      y: Number(table.y ?? 0.4),
+      width: Number(table.width ?? 0.18),
+      height: Number(table.height ?? 0.12),
+      rotation: Number(table.rotation ?? 0),
+      groupId: table.groupId || null,
+      seats: Number(table.seats ?? (isDiningShape(table.shape || "rectangle") ? 4 : 0)),
+      bedNumber: table.bedNumber ? String(table.bedNumber) : "",
+      bedStatus: isBedShape(table.shape) ? getCanonicalBedStatus(table.bedStatus) : "",
+      roomLabel: table.roomLabel ? String(table.roomLabel) : "",
+      customLabel: table.customLabel ? String(table.customLabel) : "",
+    }));
+
+    const sanitizedWalls = wallsToUse
+      .filter((wall) => wall?.start && wall?.end)
+      .map((wall) => ({
+        id: wall.id || uuid(),
+        start: {
+          x: Number(wall.start.x ?? 0),
+          y: Number(wall.start.y ?? 0),
+        },
+        end: {
+          x: Number(wall.end.x ?? 0),
+          y: Number(wall.end.y ?? 0),
+        },
+      }));
+
+    return { tables: sanitizedTables, walls: sanitizedWalls };
+  };
 
   const getWallEndpoints = () => {
     const points = [];
@@ -444,8 +559,9 @@ export default function FloorEditor() {
 
         const currentWidthPx = t.width * size.width;
         const currentHeightPx = t.height * size.height;
-        let widthPx = Math.max(MIN_TABLE_SIZE_PX, currentWidthPx * scaleX);
-        let heightPx = Math.max(MIN_TABLE_SIZE_PX, currentHeightPx * scaleY);
+        const minSizePx = getMinSizePxForShape(t.shape);
+        let widthPx = Math.max(minSizePx, currentWidthPx * scaleX);
+        let heightPx = Math.max(minSizePx, currentHeightPx * scaleY);
         if (t.shape === "square" || t.shape === "circle") {
           const side = Math.max(widthPx, heightPx);
           widthPx = side;
@@ -487,8 +603,9 @@ export default function FloorEditor() {
 
     const currentWidthPx = currentTable.width * size.width;
     const currentHeightPx = currentTable.height * size.height;
-    let widthPx = Math.max(MIN_TABLE_SIZE_PX, currentWidthPx * scaleX);
-    let heightPx = Math.max(MIN_TABLE_SIZE_PX, currentHeightPx * scaleY);
+    const minSizePx = getMinSizePxForShape(currentTable.shape);
+    let widthPx = Math.max(minSizePx, currentWidthPx * scaleX);
+    let heightPx = Math.max(minSizePx, currentHeightPx * scaleY);
     if (currentTable.shape === "square" || currentTable.shape === "circle") {
       const side = Math.max(widthPx, heightPx);
       widthPx = side;
@@ -748,6 +865,92 @@ export default function FloorEditor() {
     URL.revokeObjectURL(url);
   };
 
+  const handleImportClick = () => {
+    importInputRef.current?.click();
+  };
+
+  const updateSelectedBedStatus = (nextStatus) => {
+    if (!singleSelectedTable || !isBedShape(singleSelectedTable.shape)) return;
+    const next = getCanonicalBedStatus(nextStatus);
+    const current = getCanonicalBedStatus(singleSelectedTable.bedStatus);
+    if (next === current) return;
+
+    setHistory((prev) => [...prev, { tables: cloneItems(tables), walls: cloneItems(walls) }]);
+    setTables((prev) =>
+      prev.map((t) => (t.id === singleSelectedTable.id ? { ...t, bedStatus: next } : t))
+    );
+  };
+
+  const applySelectedLabel = () => {
+    if (!singleSelectedTable) return;
+    const nextValue = labelInput.trim();
+    setHistory((prev) => [...prev, { tables: cloneItems(tables), walls: cloneItems(walls) }]);
+    setTables((prev) =>
+      prev.map((t) =>
+        t.id === singleSelectedTable.id
+          ? isBedShape(t.shape)
+            ? { ...t, bedNumber: nextValue }
+            : isRoomLabelShape(t.shape)
+            ? { ...t, roomLabel: nextValue || "Room" }
+            : { ...t, customLabel: nextValue }
+          : t
+      )
+    );
+  };
+
+  const getDisplayLabel = (table, index) => {
+    const shape = table.shape || "rectangle";
+    if (isBedShape(shape)) return table.bedNumber || "Bed";
+    if (isRoomLabelShape(shape)) return table.roomLabel || "Room";
+    if (shape === "stairs") return table.customLabel || "Stairs";
+    return table.customLabel || String(index + 1);
+  };
+
+  const handleQuickEditLabel = (table, index) => {
+    const current = getDisplayLabel(table, index);
+    const next = window.prompt("Edit label", current);
+    if (next === null) return;
+    setLabelInput(next);
+    setHistory((prev) => [...prev, { tables: cloneItems(tables), walls: cloneItems(walls) }]);
+    setTables((prev) =>
+      prev.map((t) =>
+        t.id === table.id
+          ? isBedShape(t.shape)
+            ? { ...t, bedNumber: next.trim() }
+            : isRoomLabelShape(t.shape)
+            ? { ...t, roomLabel: next.trim() || "Room" }
+            : { ...t, customLabel: next.trim() }
+          : t
+      )
+    );
+  };
+
+  const handleImportLayout = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || "{}"));
+        const imported = normalizeImportedLayout(parsed);
+        setHistory((prev) => [...prev, { tables: cloneItems(tables), walls: cloneItems(walls) }]);
+        setTables(imported.tables);
+        setWalls(imported.walls);
+        setSelectedIds([]);
+        setCopiedTables([]);
+        setDraftWall(null);
+        setMode("select");
+        setImportError("");
+      } catch {
+        setImportError("Invalid JSON file. Please upload a valid layout export.");
+      } finally {
+        if (importInputRef.current) importInputRef.current.value = "";
+      }
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div className="p-6 space-y-4">
       <h1 className="text-2xl font-bold">Floor Layout Editor</h1>
@@ -782,6 +985,12 @@ export default function FloorEditor() {
           className="px-4 py-2 bg-teal-700 text-white rounded"
         >
           Stairs
+        </button>
+        <button
+          onClick={() => addTable("room-label")}
+          className="px-4 py-2 bg-yellow-700 text-white rounded"
+        >
+          Room Label
         </button>
         <button
           onClick={() => setMode((m) => (m === "draw-wall" ? "select" : "draw-wall"))}
@@ -824,15 +1033,80 @@ export default function FloorEditor() {
         >
           Export JSON
         </button>
+        <button
+          onClick={handleImportClick}
+          className="px-4 py-2 rounded text-white bg-slate-600"
+        >
+          Import JSON
+        </button>
         <a href="/viewer" className="px-4 py-2 rounded text-white bg-slate-900">
           Open Viewer
         </a>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          onChange={handleImportLayout}
+          className="hidden"
+        />
       </div>
+      {importError ? <div className="text-sm text-red-600">{importError}</div> : null}
+      {singleSelectedTable ? (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="font-medium">
+            {isBedShape(singleSelectedTable.shape)
+              ? "Bed Number:"
+              : isRoomLabelShape(singleSelectedTable.shape)
+              ? "Room Name/Number:"
+              : "Label:"}
+          </span>
+          <input
+            value={labelInput}
+            onChange={(e) => setLabelInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                applySelectedLabel();
+              }
+            }}
+            className="px-2 py-1 border rounded w-56 text-black"
+            placeholder={
+              isBedShape(singleSelectedTable.shape)
+                ? "e.g. B-101"
+                : isRoomLabelShape(singleSelectedTable.shape)
+                ? "e.g. Room 101"
+                : "e.g. Table A"
+            }
+          />
+          <button
+            onClick={applySelectedLabel}
+            className="px-3 py-1 rounded bg-slate-700 text-white"
+          >
+            Apply
+          </button>
+          {isBedShape(singleSelectedTable.shape) ? (
+            <>
+              <span className="font-medium ml-4">Status:</span>
+              <select
+                value={getCanonicalBedStatus(singleSelectedTable.bedStatus)}
+                onChange={(e) => updateSelectedBedStatus(e.target.value)}
+                className="px-2 py-1 border rounded text-black"
+              >
+                {BED_STATUS_OPTIONS.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : null}
+        </div>
+      ) : null}
       <div className="text-sm text-gray-600">
         Mode: {mode === "draw-wall" ? "Wall Draw" : "Select"} | Tip: walls auto-lock
         to X/Y direction and can cross or connect on existing walls. Use Shift/Ctrl/Cmd
         + click or drag on empty canvas to multi-select. Ctrl/Cmd+G groups,
-        Ctrl/Cmd+Shift+G ungroups.
+        Ctrl/Cmd+Shift+G ungroups. Double-click any object label to edit quickly.
       </div>
 
       <div
@@ -938,6 +1212,11 @@ export default function FloorEditor() {
                     seats: table.seats ?? 4,
                   })
                 : [];
+              const isSelected = selectedIds.includes(table.id);
+              const bedStyle = getBedVisualStyle({
+                status: table.bedStatus,
+                selected: isSelected,
+              });
 
               return (
                 <Group key={table.id}>
@@ -965,6 +1244,8 @@ export default function FloorEditor() {
                     draggable={mode !== "draw-wall"}
                     onClick={(e) => handleObjectSelect(table.id, e)}
                     onTap={(e) => handleObjectSelect(table.id, e)}
+                    onDblClick={() => handleQuickEditLabel(table, index)}
+                    onDblTap={() => handleQuickEditLabel(table, index)}
                     onDragStart={() => onTableDragStart(table.id)}
                     onDragMove={(e) => onTableDragMove(table.id, e)}
                     onDragEnd={(e) => onTableDragEnd(table.id, e)}
@@ -976,35 +1257,55 @@ export default function FloorEditor() {
                         x={width / 2}
                         y={height / 2}
                         radius={Math.min(width, height) / 2}
-                        fill={selectedIds.includes(table.id) ? "#dbeafe" : "#d2d6dc"}
+                        fill={isSelected ? "#dbeafe" : "#d2d6dc"}
                         stroke="#c6ccd3"
                         strokeWidth={2}
                       />
                     ) : shape === "bed" ? (
                       <Group>
-                        <Rect
-                          width={width}
-                          height={height}
-                          fill={selectedIds.includes(table.id) ? "#fef3c7" : "#f4e3c1"}
-                          stroke="#b8925a"
-                          strokeWidth={2}
-                          cornerRadius={12}
-                        />
-                        <Rect
-                          x={6}
-                          y={6}
-                          width={Math.max(0, width - 12)}
-                          height={Math.max(0, height * 0.35)}
-                          fill="#e2d2b1"
-                          cornerRadius={8}
-                        />
+                        <Group scaleX={width / 200} scaleY={height / 240}>
+                          <Rect
+                            x={20}
+                            y={20}
+                            width={160}
+                            height={200}
+                            cornerRadius={12}
+                            fill={bedStyle.outerFill}
+                            stroke={bedStyle.outline}
+                            strokeWidth={4}
+                          />
+                          <Rect
+                            x={28}
+                            y={28}
+                            width={144}
+                            height={184}
+                            cornerRadius={10}
+                            fill={bedStyle.innerFill}
+                          />
+                          <Rect
+                            x={28}
+                            y={98}
+                            width={144}
+                            height={6}
+                            cornerRadius={3}
+                            fill={bedStyle.stripeFill}
+                          />
+                          <Rect
+                            x={48}
+                            y={36}
+                            width={104}
+                            height={52}
+                            cornerRadius={12}
+                            fill={bedStyle.pillowFill}
+                          />
+                        </Group>
                       </Group>
                     ) : shape === "stairs" ? (
                       <Group>
                         <Rect
                           width={width}
                           height={height}
-                          fill={selectedIds.includes(table.id) ? "#ccfbf1" : "#dbe4ea"}
+                          fill={isSelected ? "#ccfbf1" : "#dbe4ea"}
                           stroke="#90a3b4"
                           strokeWidth={2}
                           cornerRadius={8}
@@ -1018,30 +1319,52 @@ export default function FloorEditor() {
                           />
                         ))}
                       </Group>
+                    ) : shape === "room-label" ? (
+                      <Group>
+                        <Rect
+                          width={width}
+                          height={height}
+                          fill={isSelected ? "#fef08a" : "#fffbeb"}
+                          stroke="#a16207"
+                          strokeWidth={2}
+                          cornerRadius={10}
+                        />
+                        <Rect
+                          x={4}
+                          y={4}
+                          width={Math.max(0, width - 8)}
+                          height={Math.max(0, height - 8)}
+                          fill={isSelected ? "#fde68a" : "#fef3c7"}
+                          cornerRadius={8}
+                        />
+                      </Group>
                     ) : (
                       <Rect
                         width={width}
                         height={height}
-                        fill={selectedIds.includes(table.id) ? "#dbeafe" : "#d2d6dc"}
+                        fill={isSelected ? "#dbeafe" : "#d2d6dc"}
                         stroke="#c6ccd3"
                         strokeWidth={2}
                         cornerRadius={shape === "square" ? 8 : 28}
                       />
                     )}
                     <Text
-                      text={
-                        shape === "bed"
-                          ? "Bed"
-                          : shape === "stairs"
-                          ? "Stairs"
-                          : String(index + 1)
-                      }
+                      text={getDisplayLabel(table, index)}
                       x={0}
-                      y={height / 2 - 8}
+                      y={shape === "bed" ? height * 0.225 : height / 2 - 8}
                       width={width}
                       align="center"
-                      fontSize={shape === "bed" || shape === "stairs" ? 13 : 18}
-                      fill="#111827"
+                      fontSize={
+                        shape === "bed"
+                          ? Math.max(9, Math.min(11, width * 0.09))
+                          : shape === "room-label"
+                          ? Math.max(10, Math.min(15, width * 0.12))
+                          : shape === "stairs"
+                          ? 13
+                          : 18
+                      }
+                      fontStyle={shape === "room-label" ? "bold" : "normal"}
+                      fill={shape === "bed" ? "#0f172a" : shape === "room-label" ? "#78350f" : "#111111"}
                     />
                   </Group>
                 </Group>
@@ -1069,7 +1392,8 @@ export default function FloorEditor() {
                     ]
               }
               boundBoxFunc={(oldBox, newBox) => {
-                if (newBox.width < MIN_TABLE_SIZE_PX || newBox.height < MIN_TABLE_SIZE_PX) {
+                const minSizePx = getMinSizePxForShape(singleSelectedTable?.shape);
+                if (newBox.width < minSizePx || newBox.height < minSizePx) {
                   return oldBox;
                 }
                 return newBox;

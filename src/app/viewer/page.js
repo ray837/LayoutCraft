@@ -3,6 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Layer, Line, Rect, Shape, Stage } from "react-konva";
 import { FurnitureNode } from "../../components/layout-viewer/shape-nodes";
+import {
+  BED_STATUS_OPTIONS,
+  getBedVisualStyle,
+  getCanonicalBedStatus,
+} from "../../components/layout-viewer/bed-status-style";
 
 const WALL_THICKNESS = 14;
 
@@ -69,6 +74,8 @@ export default function LayoutViewerPage() {
   const [layout, setLayout] = useState({ tables: [], walls: [] });
   const [error, setError] = useState("");
   const [sourceName, setSourceName] = useState("");
+  const [focusedRoomId, setFocusedRoomId] = useState(null);
+  const [activeStatusFilter, setActiveStatusFilter] = useState("All");
 
   useEffect(() => {
     const observer = new ResizeObserver((entries) => {
@@ -81,6 +88,30 @@ export default function LayoutViewerPage() {
   }, []);
 
   const furniture = useMemo(() => layout.tables || [], [layout.tables]);
+  const isFilterActive = activeStatusFilter !== "All";
+  const wallBaseColor = "#495462";
+  const wallHighlightColor = "#6f7d8d";
+  const bedStatusLegend = useMemo(
+    () =>
+      BED_STATUS_OPTIONS.map((status) => {
+        const canonical = getCanonicalBedStatus(status);
+        const style = getBedVisualStyle({ status: canonical, selected: false });
+        const isVacant = style.outerFill === "transparent";
+        return {
+          status: canonical,
+          fill: isVacant ? "transparent" : style.outerFill,
+          border: isVacant ? "#94a3b8" : style.stripeFill,
+          text: isVacant ? "#64748b" : style.stripeFill,
+        };
+      }),
+    []
+  );
+  const toggleStatusFilter = (status) => {
+    setActiveStatusFilter((prev) => (prev === status ? "All" : status));
+  };
+
+  const clearFocusedRoom = () => setFocusedRoomId(null);
+  const focusRoomLabel = (item) => setFocusedRoomId(item.id || null);
 
   const onUploadJson = (e) => {
     const file = e.target.files?.[0];
@@ -119,6 +150,49 @@ export default function LayoutViewerPage() {
         />
         {sourceName && <span className="text-sm text-gray-600">Loaded: {sourceName}</span>}
       </div>
+      <div className="p-2">
+        <div className="text-xs font-semibold text-slate-700 mb-2">Bed Status Legend</div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveStatusFilter("All")}
+            className={`inline-flex items-center gap-2 px-2 py-1 rounded-full border text-xs font-semibold transition ${
+              activeStatusFilter === "All"
+                ? "border-slate-700 bg-slate-700 text-white"
+                : "border-slate-300 bg-white text-slate-700"
+            }`}
+          >
+            All
+          </button>
+          {bedStatusLegend.map((item) => (
+            <button
+              key={item.status}
+              type="button"
+              onClick={() => toggleStatusFilter(item.status)}
+              className={`inline-flex items-center gap-2 px-2 py-1 rounded-full border transition ${
+                activeStatusFilter === item.status
+                  ? "border-slate-900 ring-2 ring-slate-300"
+                  : "border-transparent"
+              }`}
+            >
+              <span
+                className="inline-block w-3 h-3 rounded-full border"
+                style={{ backgroundColor: item.fill, borderColor: item.border }}
+              />
+              <span
+                className="text-xs px-2 py-0.5 rounded-full border font-semibold"
+                style={{
+                  backgroundColor: item.fill,
+                  borderColor: item.border,
+                  color: item.text,
+                }}
+              >
+                {item.status}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
 
       {error ? <div className="text-sm text-red-600">{error}</div> : null}
 
@@ -127,7 +201,16 @@ export default function LayoutViewerPage() {
         className="w-full h-[700px] border rounded-xl bg-[#e5e7eb]"
       >
         <Stage width={size.width} height={size.height}>
-          <Layer>
+          <Layer
+            onMouseDown={(e) => {
+              const stage = e.target.getStage();
+              if (e.target === stage) clearFocusedRoom();
+            }}
+            onTap={(e) => {
+              const stage = e.target.getStage();
+              if (e.target === stage) clearFocusedRoom();
+            }}
+          >
             <Rect
               x={24}
               y={24}
@@ -148,7 +231,7 @@ export default function LayoutViewerPage() {
                 ctx.lineCap = "round";
                 ctx.lineJoin = "round";
 
-                ctx.strokeStyle = "#495462";
+                ctx.strokeStyle = wallBaseColor;
                 ctx.lineWidth = WALL_THICKNESS;
                 layout.walls.forEach((wall) => {
                   const start = toPxPoint(wall.start, size);
@@ -159,7 +242,7 @@ export default function LayoutViewerPage() {
                   ctx.stroke();
                 });
 
-                ctx.strokeStyle = "#6f7d8d";
+                ctx.strokeStyle = wallHighlightColor;
                 ctx.lineWidth = 4;
                 layout.walls.forEach((wall) => {
                   const start = toPxPoint(wall.start, size);
@@ -175,14 +258,29 @@ export default function LayoutViewerPage() {
               }}
             />
 
-            {furniture.map((item, index) => (
-              <FurnitureNode
-                key={item.id || `item-${index}`}
-                item={item}
-                canvasSize={size}
-                index={index}
-              />
-            ))}
+            {furniture.map((item, index) => {
+              const isBed = item.shape === "bed";
+              const canonicalStatus = getCanonicalBedStatus(item.bedStatus);
+              const mutedByFilter =
+                isFilterActive && isBed && canonicalStatus !== activeStatusFilter;
+              const renderItem = mutedByFilter ? { ...item, bedStatus: "Vacant" } : item;
+
+              return (
+                <FurnitureNode
+                  key={item.id || `item-${index}`}
+                  item={renderItem}
+                  canvasSize={size}
+                  index={index}
+                  muted={mutedByFilter}
+                  isFocused={item.shape === "room-label" && item.id === focusedRoomId}
+                  onClick={
+                    item.shape === "room-label"
+                      ? () => focusRoomLabel(item)
+                      : undefined
+                  }
+                />
+              );
+            })}
 
             {layout.walls.map((wall) => {
               const start = toPxPoint(wall.start, size);

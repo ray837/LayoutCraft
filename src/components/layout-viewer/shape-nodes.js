@@ -1,6 +1,7 @@
 "use client";
 
 import { Circle, Group, Line, Rect, Text } from "react-konva";
+import { getBedVisualStyle } from "./bed-status-style";
 
 const getSeatPositions = ({ x, y, width, height, shape, seats }) => {
   const safeSeats = Math.max(1, seats || 4);
@@ -30,33 +31,58 @@ const getSeatPositions = ({ x, y, width, height, shape, seats }) => {
   return points;
 };
 
-export function BedNode({ x, y, width, height, rotation = 0 }) {
+export function BedNode({ x, y, width, height, rotation = 0, bedNumber, bedStatus, muted = false }) {
+  const bedStyle = getBedVisualStyle({ status: bedStatus, selected: false });
+  const outlineColor = muted ? "#cbd5e1" : bedStyle.outline;
+  const stripeColor = muted ? "#cbd5e1" : bedStyle.stripeFill;
+  const labelColor = muted ? "#94a3b8" : "#0f172a";
+
   return (
     <Group x={x} y={y} rotation={rotation}>
-      <Rect
-        width={width}
-        height={height}
-        fill="#f4e3c1"
-        stroke="#b8925a"
-        strokeWidth={2}
-        cornerRadius={12}
-      />
-      <Rect
-        x={6}
-        y={6}
-        width={Math.max(0, width - 12)}
-        height={Math.max(0, height * 0.35)}
-        fill="#e2d2b1"
-        cornerRadius={8}
-      />
+      <Group scaleX={width / 200} scaleY={height / 240}>
+        <Rect
+          x={20}
+          y={20}
+          width={160}
+          height={200}
+          cornerRadius={12}
+          fill={bedStyle.outerFill}
+          stroke={outlineColor}
+          strokeWidth={4}
+        />
+        <Rect
+          x={28}
+          y={28}
+          width={144}
+          height={184}
+          cornerRadius={10}
+          fill={bedStyle.innerFill}
+        />
+        <Rect
+          x={28}
+          y={98}
+          width={144}
+          height={6}
+          cornerRadius={3}
+          fill={stripeColor}
+        />
+        <Rect
+          x={48}
+          y={36}
+          width={104}
+          height={52}
+          cornerRadius={12}
+          fill={bedStyle.pillowFill}
+        />
+      </Group>
       <Text
-        text="Bed"
+        text={bedNumber || "Bed"}
         x={0}
-        y={height / 2 - 8}
+        y={height * 0.225}
         width={width}
         align="center"
-        fontSize={13}
-        fill="#111827"
+        fontSize={Math.max(9, Math.min(11, width * 0.09))}
+        fill={labelColor}
       />
     </Group>
   );
@@ -83,6 +109,51 @@ export function StairsNode({ x, y, width, height, rotation = 0 }) {
       ))}
       <Text
         text="Stairs"
+        x={0}
+        y={height / 2 - 8}
+        width={width}
+        align="center"
+        fontSize={13}
+        fill="#111827"
+      />
+    </Group>
+  );
+}
+
+export function RoomLabelNode({
+  x,
+  y,
+  width,
+  height,
+  rotation = 0,
+  roomLabel,
+  isFocused = false,
+  onClick,
+}) {
+  return (
+    <Group
+      x={x}
+      y={y}
+      rotation={rotation}
+      onClick={(e) => {
+        e.cancelBubble = true;
+        onClick?.(e);
+      }}
+      onTap={(e) => {
+        e.cancelBubble = true;
+        onClick?.(e);
+      }}
+    >
+      <Rect
+        width={width}
+        height={height}
+        fill={isFocused ? "#fef08a" : "#fef3c7"}
+        stroke={isFocused ? "#1d4ed8" : "#b45309"}
+        strokeWidth={isFocused ? 3 : 2}
+        cornerRadius={8}
+      />
+      <Text
+        text={roomLabel || "Room"}
         x={0}
         y={height / 2 - 8}
         width={width}
@@ -153,7 +224,7 @@ export function TableNode({ x, y, width, height, shape = "rectangle", rotation =
   );
 }
 
-export function FurnitureNode({ item, canvasSize, index }) {
+export function FurnitureNode({ item, canvasSize, index, onClick, isFocused = false, muted = false }) {
   const shape = item.shape || "rectangle";
   const x = item.x * canvasSize.width;
   const y = item.y * canvasSize.height;
@@ -161,11 +232,37 @@ export function FurnitureNode({ item, canvasSize, index }) {
   const height = item.height * canvasSize.height;
 
   if (shape === "bed") {
-    return <BedNode x={x} y={y} width={width} height={height} rotation={item.rotation || 0} />;
+    return (
+      <BedNode
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        rotation={item.rotation || 0}
+        bedNumber={item.bedNumber}
+        bedStatus={item.bedStatus}
+        muted={muted}
+      />
+    );
   }
 
   if (shape === "stairs") {
     return <StairsNode x={x} y={y} width={width} height={height} rotation={item.rotation || 0} />;
+  }
+
+  if (shape === "room-label") {
+    return (
+      <RoomLabelNode
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        rotation={item.rotation || 0}
+        roomLabel={item.roomLabel}
+        isFocused={isFocused}
+        onClick={onClick}
+      />
+    );
   }
 
   return (
