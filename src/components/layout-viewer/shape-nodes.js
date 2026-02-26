@@ -31,10 +31,30 @@ const getSeatPositions = ({ x, y, width, height, shape, seats }) => {
   return points;
 };
 
-export function BedNode({ x, y, width, height, rotation = 0, bedNumber, bedStatus, muted = false }) {
+export function BedNode({
+  x,
+  y,
+  width,
+  height,
+  rotation = 0,
+  bedNumber,
+  bedStatus,
+  muted = false,
+  isLinkedBedHighlight = false,
+}) {
   const bedStyle = getBedVisualStyle({ status: bedStatus, selected: false });
-  const outlineColor = muted ? "#cbd5e1" : bedStyle.outline;
-  const stripeColor = muted ? "#cbd5e1" : bedStyle.stripeFill;
+
+  // Muted overrides everything; highlight overrides normal
+  const outlineColor = muted
+    ? "#cbd5e1"
+    : isLinkedBedHighlight
+    ? "#f59e0b"
+    : bedStyle.outline;
+  const stripeColor = muted
+    ? "#cbd5e1"
+    : isLinkedBedHighlight
+    ? "#fbbf24"
+    : bedStyle.stripeFill;
   const labelColor = muted ? "#94a3b8" : "#0f172a";
 
   return (
@@ -46,9 +66,9 @@ export function BedNode({ x, y, width, height, rotation = 0, bedNumber, bedStatu
           width={160}
           height={200}
           cornerRadius={12}
-          fill={bedStyle.outerFill}
+          fill={isLinkedBedHighlight ? "#fef3c7" : bedStyle.outerFill}
           stroke={outlineColor}
-          strokeWidth={4}
+          strokeWidth={isLinkedBedHighlight ? 6 : 4}
         />
         <Rect
           x={28}
@@ -75,6 +95,7 @@ export function BedNode({ x, y, width, height, rotation = 0, bedNumber, bedStatu
           fill={bedStyle.pillowFill}
         />
       </Group>
+
       <Text
         text={bedNumber || "Bed"}
         x={0}
@@ -148,9 +169,12 @@ export function RoomLabelNode({
         width={width}
         height={height}
         fill={isFocused ? "#fef08a" : "#fef3c7"}
-        stroke={isFocused ? "#1d4ed8" : "#b45309"}
+        stroke={isFocused ? "#f59e0b" : "#b45309"}
         strokeWidth={isFocused ? 3 : 2}
         cornerRadius={8}
+        shadowColor={isFocused ? "#f59e0b" : undefined}
+        shadowBlur={isFocused ? 10 : 0}
+        shadowOpacity={isFocused ? 0.6 : 0}
       />
       <Text
         text={roomLabel || "Room"}
@@ -159,24 +183,28 @@ export function RoomLabelNode({
         width={width}
         align="center"
         fontSize={13}
-        fill="#111827"
+        fontStyle={isFocused ? "bold" : "normal"}
+        fill={isFocused ? "#92400e" : "#111827"}
       />
     </Group>
   );
 }
 
-export function TableNode({ x, y, width, height, shape = "rectangle", rotation = 0, seats = 4, label }) {
-  const seatPoints = getSeatPositions({
-    x,
-    y,
-    width,
-    height,
-    shape,
-    seats,
-  });
+export function TableNode({
+  x,
+  y,
+  width,
+  height,
+  shape = "rectangle",
+  rotation = 0,
+  seats = 4,
+  label,
+  muted = false,
+}) {
+  const seatPoints = getSeatPositions({ x, y, width, height, shape, seats });
 
   return (
-    <Group>
+    <Group opacity={muted ? 0.25 : 1}>
       {seatPoints.map((seat, seatIndex) => (
         <Rect
           key={`seat-${seatIndex}`}
@@ -224,7 +252,15 @@ export function TableNode({ x, y, width, height, shape = "rectangle", rotation =
   );
 }
 
-export function FurnitureNode({ item, canvasSize, index, onClick, isFocused = false, muted = false }) {
+export function FurnitureNode({
+  item,
+  canvasSize,
+  index,
+  onClick,
+  isFocused = false,
+  muted = false,
+  isLinkedBedHighlight = false,
+}) {
   const shape = item.shape || "rectangle";
   const x = item.x * canvasSize.width;
   const y = item.y * canvasSize.height;
@@ -242,12 +278,22 @@ export function FurnitureNode({ item, canvasSize, index, onClick, isFocused = fa
         bedNumber={item.bedNumber}
         bedStatus={item.bedStatus}
         muted={muted}
+        isLinkedBedHighlight={isLinkedBedHighlight}
       />
     );
   }
 
   if (shape === "stairs") {
-    return <StairsNode x={x} y={y} width={width} height={height} rotation={item.rotation || 0} />;
+    return (
+      <StairsNode
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        rotation={item.rotation || 0}
+        muted={muted}
+      />
+    );
   }
 
   if (shape === "room-label") {
@@ -275,6 +321,7 @@ export function FurnitureNode({ item, canvasSize, index, onClick, isFocused = fa
       rotation={item.rotation || 0}
       seats={item.seats ?? 4}
       label={String(index + 1)}
+      muted={muted}
     />
   );
 }

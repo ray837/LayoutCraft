@@ -96,6 +96,77 @@ export default function FloorEditor() {
   const canUngroup = selectedTables.some((t) => t.groupId);
   const useMergedWallRender = mode !== "draw-wall";
 
+  // ─── Room-Bed Linking ────────────────────────────────────────────────────
+  // Determine if the current selection contains beds AND/OR a room label
+  const selectedBeds = selectedTables.filter((t) => isBedShape(t.shape));
+  const selectedRoomLabels = selectedTables.filter((t) => isRoomLabelShape(t.shape));
+  const canLinkBedToRoom =
+    selectedBeds.length > 0 && selectedRoomLabels.length === 1;
+  const canUnlinkBeds =
+    selectedBeds.length > 0 &&
+    selectedBeds.some((b) => b.linkedRoomId);
+
+  // All room labels in the canvas (for the dropdown on a single bed)
+  const allRoomLabels = tables.filter((t) => isRoomLabelShape(t.shape));
+
+  // For the single-bed case: which room is it currently linked to?
+  const singleBedLinkedRoom =
+    singleSelectedTable && isBedShape(singleSelectedTable.shape)
+      ? allRoomLabels.find((r) => r.id === singleSelectedTable.linkedRoomId) ?? null
+      : null;
+
+  const linkBedsToRoom = () => {
+    if (!canLinkBedToRoom) return;
+    const roomLabel = selectedRoomLabels[0];
+    const bedIds = new Set(selectedBeds.map((b) => b.id));
+    setHistory((prev) => [
+      ...prev,
+      { tables: cloneItems(tables), walls: cloneItems(walls) },
+    ]);
+    setTables((prev) =>
+      prev.map((t) =>
+        bedIds.has(t.id) ? { ...t, linkedRoomId: roomLabel.id } : t
+      )
+    );
+  };
+
+  const unlinkBeds = () => {
+    if (!canUnlinkBeds) return;
+    const bedIds = new Set(selectedBeds.map((b) => b.id));
+    setHistory((prev) => [
+      ...prev,
+      { tables: cloneItems(tables), walls: cloneItems(walls) },
+    ]);
+    setTables((prev) =>
+      prev.map((t) =>
+        bedIds.has(t.id) ? { ...t, linkedRoomId: null } : t
+      )
+    );
+  };
+
+  const linkSingleBedToRoom = (roomId) => {
+    if (!singleSelectedTable || !isBedShape(singleSelectedTable.shape)) return;
+    setHistory((prev) => [
+      ...prev,
+      { tables: cloneItems(tables), walls: cloneItems(walls) },
+    ]);
+    setTables((prev) =>
+      prev.map((t) =>
+        t.id === singleSelectedTable.id
+          ? { ...t, linkedRoomId: roomId || null }
+          : t
+      )
+    );
+  };
+
+  // Helper: get linked room label text for a bed
+  const getLinkedRoomLabel = (bed) => {
+    if (!bed.linkedRoomId) return null;
+    const room = tables.find((t) => t.id === bed.linkedRoomId);
+    return room ? room.roomLabel || "Room" : null;
+  };
+  // ────────────────────────────────────────────────────────────────────────
+
   useEffect(() => {
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0].contentRect;
@@ -190,6 +261,7 @@ export default function FloorEditor() {
         bedStatus: isBedShape(shape) ? "Vacant" : "",
         roomLabel: isRoomLabelShape(shape) ? `Room ${nextRoomNumber}` : "",
         customLabel: "",
+        linkedRoomId: null,
       },
     ]);
   };
@@ -242,6 +314,7 @@ export default function FloorEditor() {
       rotation: table.rotation || 0,
       groupId: null,
       seats: table.seats ?? 4,
+      linkedRoomId: null,
     };
   };
 
@@ -270,6 +343,7 @@ export default function FloorEditor() {
       bedStatus: isBedShape(table.shape) ? getCanonicalBedStatus(table.bedStatus) : "",
       roomLabel: table.roomLabel ? String(table.roomLabel) : "",
       customLabel: table.customLabel ? String(table.customLabel) : "",
+      linkedRoomId: table.linkedRoomId || null,
     }));
 
     const sanitizedWalls = wallsToUse
@@ -841,11 +915,37 @@ export default function FloorEditor() {
         };
       });
 
+    // Build bed entries with resolved linkedRoomLabel
+    const bedEntries = tables
+      .filter((table) => isBedShape(table.shape))
+      .map((table) => ({
+        id: table.id,
+        bedNumber: table.bedNumber || "",
+        bedStatus: table.bedStatus || "Vacant",
+        linkedRoomId: table.linkedRoomId || null,
+        linkedRoomLabel: getLinkedRoomLabel(table) || null,
+        pos: { x: table.x, y: table.y },
+        size: { w: table.width, h: table.height },
+        rotation: table.rotation || 0,
+      }));
+
+    const roomLabelEntries = tables
+      .filter((table) => isRoomLabelShape(table.shape))
+      .map((table) => ({
+        id: table.id,
+        roomLabel: table.roomLabel || "Room",
+        pos: { x: table.x, y: table.y },
+        size: { w: table.width, h: table.height },
+        rotation: table.rotation || 0,
+      }));
+
     const payload = {
       schemaVersion: 2,
       exportedAt: new Date().toISOString(),
       canvasPx: { width: size.width, height: size.height },
       tables: seatingTables,
+      beds: bedEntries,
+      roomLabels: roomLabelEntries,
       walls,
       editor: {
         tables,
@@ -955,7 +1055,7 @@ export default function FloorEditor() {
     <div className="p-6 space-y-4">
       <h1 className="text-2xl font-bold">Floor Layout Editor</h1>
 
-      <div className="flex gap-3">
+      <div className="flex gap-3 flex-wrap">
         <button
           onClick={() => addTable("rectangle")}
           className="px-4 py-2 bg-blue-600 text-white rounded"
@@ -1050,63 +1150,117 @@ export default function FloorEditor() {
           className="hidden"
         />
       </div>
+
       {importError ? <div className="text-sm text-red-600">{importError}</div> : null}
-      {singleSelectedTable ? (
-        <div className="flex items-center gap-2 text-sm">
-          <span className="font-medium">
-            {isBedShape(singleSelectedTable.shape)
-              ? "Bed Number:"
-              : isRoomLabelShape(singleSelectedTable.shape)
-              ? "Room Name/Number:"
-              : "Label:"}
-          </span>
-          <input
-            value={labelInput}
-            onChange={(e) => setLabelInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                applySelectedLabel();
-              }
-            }}
-            className="px-2 py-1 border rounded w-56 text-black"
-            placeholder={
-              isBedShape(singleSelectedTable.shape)
-                ? "e.g. B-101"
+
+      {/* ── Property Panel ────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-3 text-sm min-h-[36px]">
+        {/* Label editor for any single selected item */}
+        {singleSelectedTable ? (
+          <>
+            <span className="font-medium">
+              {isBedShape(singleSelectedTable.shape)
+                ? "Bed Number:"
                 : isRoomLabelShape(singleSelectedTable.shape)
-                ? "e.g. Room 101"
-                : "e.g. Table A"
-            }
-          />
+                ? "Room Name/Number:"
+                : "Label:"}
+            </span>
+            <input
+              value={labelInput}
+              onChange={(e) => setLabelInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  applySelectedLabel();
+                }
+              }}
+              className="px-2 py-1 border rounded w-48 text-black"
+              placeholder={
+                isBedShape(singleSelectedTable.shape)
+                  ? "e.g. B-101"
+                  : isRoomLabelShape(singleSelectedTable.shape)
+                  ? "e.g. Room 101"
+                  : "e.g. Table A"
+              }
+            />
+            <button
+              onClick={applySelectedLabel}
+              className="px-3 py-1 rounded bg-slate-700 text-white"
+            >
+              Apply
+            </button>
+
+            {/* Bed-specific controls */}
+            {isBedShape(singleSelectedTable.shape) ? (
+              <>
+                <span className="font-medium ml-2">Status:</span>
+                <select
+                  value={getCanonicalBedStatus(singleSelectedTable.bedStatus)}
+                  onChange={(e) => updateSelectedBedStatus(e.target.value)}
+                  className="px-2 py-1 border rounded text-black"
+                >
+                  {BED_STATUS_OPTIONS.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+
+                {/* Room link status — prominent top bar display */}
+                {singleBedLinkedRoom ? (
+                  <span className="ml-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-400 text-amber-900 font-semibold text-sm shadow-sm">
+                    🔗 <span className="text-amber-500 font-normal">Linked to</span> {singleBedLinkedRoom.roomLabel || "Room"}
+                  </span>
+                ) : (
+                  <span className="ml-2 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gray-100 border border-gray-300 text-gray-400 text-sm">
+                    Not linked to any room
+                  </span>
+                )}
+
+                {/* Room link dropdown */}
+                <span className="font-medium ml-2">Change Room:</span>
+                <select
+                  value={singleSelectedTable.linkedRoomId || ""}
+                  onChange={(e) => linkSingleBedToRoom(e.target.value || null)}
+                  className="px-2 py-1 border rounded text-black"
+                >
+                  <option value="">— None —</option>
+                  {allRoomLabels.map((room) => (
+                    <option key={room.id} value={room.id}>
+                      {room.roomLabel || "Room"}
+                    </option>
+                  ))}
+                </select>
+              </>
+            ) : null}
+          </>
+        ) : null}
+
+        {/* Multi-selection link / unlink buttons */}
+        {canLinkBedToRoom ? (
           <button
-            onClick={applySelectedLabel}
-            className="px-3 py-1 rounded bg-slate-700 text-white"
+            onClick={linkBedsToRoom}
+            className="px-3 py-1 rounded bg-amber-600 text-white font-semibold flex items-center gap-1"
           >
-            Apply
+            🔗 Link {selectedBeds.length} Bed{selectedBeds.length > 1 ? "s" : ""} →{" "}
+            {selectedRoomLabels[0].roomLabel || "Room"}
           </button>
-          {isBedShape(singleSelectedTable.shape) ? (
-            <>
-              <span className="font-medium ml-4">Status:</span>
-              <select
-                value={getCanonicalBedStatus(singleSelectedTable.bedStatus)}
-                onChange={(e) => updateSelectedBedStatus(e.target.value)}
-                className="px-2 py-1 border rounded text-black"
-              >
-                {BED_STATUS_OPTIONS.map((status) => (
-                  <option key={status} value={status}>
-                    {status}
-                  </option>
-                ))}
-              </select>
-            </>
-          ) : null}
-        </div>
-      ) : null}
+        ) : null}
+        {canUnlinkBeds ? (
+          <button
+            onClick={unlinkBeds}
+            className="px-3 py-1 rounded bg-gray-500 text-white font-semibold flex items-center gap-1"
+          >
+            ✂️ Unlink Bed{selectedBeds.length > 1 ? "s" : ""}
+          </button>
+        ) : null}
+      </div>
+      {/* ─────────────────────────────────────────────────────────────── */}
+
       <div className="text-sm text-gray-600">
-        Mode: {mode === "draw-wall" ? "Wall Draw" : "Select"} | Tip: walls auto-lock
-        to X/Y direction and can cross or connect on existing walls. Use Shift/Ctrl/Cmd
-        + click or drag on empty canvas to multi-select. Ctrl/Cmd+G groups,
-        Ctrl/Cmd+Shift+G ungroups. Double-click any object label to edit quickly.
+        Mode: {mode === "draw-wall" ? "Wall Draw" : "Select"} | Tip: select beds + a room
+        label together then click "Link Beds → Room", or pick a room from the dropdown when
+        a single bed is selected. Linked beds show a 🔗 badge on the canvas.
       </div>
 
       <div
@@ -1142,7 +1296,6 @@ export default function FloorEditor() {
                   ctx.lineCap = "round";
                   ctx.lineJoin = "round";
 
-                  // Wall base stroke pass
                   ctx.strokeStyle = "#495462";
                   ctx.lineWidth = WALL_THICKNESS;
                   walls.forEach((wall) => {
@@ -1154,7 +1307,6 @@ export default function FloorEditor() {
                     ctx.stroke();
                   });
 
-                  // Highlight pass for style depth
                   ctx.strokeStyle = "#6f7d8d";
                   ctx.lineWidth = 4;
                   walls.forEach((wall) => {
@@ -1217,6 +1369,7 @@ export default function FloorEditor() {
                 status: table.bedStatus,
                 selected: isSelected,
               });
+
 
               return (
                 <Group key={table.id}>
@@ -1348,6 +1501,8 @@ export default function FloorEditor() {
                         cornerRadius={shape === "square" ? 8 : 28}
                       />
                     )}
+
+                    {/* Main label */}
                     <Text
                       text={getDisplayLabel(table, index)}
                       x={0}
@@ -1366,6 +1521,8 @@ export default function FloorEditor() {
                       fontStyle={shape === "room-label" ? "bold" : "normal"}
                       fill={shape === "bed" ? "#0f172a" : shape === "room-label" ? "#78350f" : "#111111"}
                     />
+
+
                   </Group>
                 </Group>
               );

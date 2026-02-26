@@ -48,6 +48,7 @@ const convertSeatingTableToEditorTable = (table) => {
     rotation: table.rotation || 0,
     groupId: null,
     seats: table.seats ?? 4,
+    linkedRoomId: null,
   };
 };
 
@@ -91,6 +92,25 @@ export default function LayoutViewerPage() {
   const isFilterActive = activeStatusFilter !== "All";
   const wallBaseColor = "#495462";
   const wallHighlightColor = "#6f7d8d";
+
+  // ── Room-link highlighting ────────────────────────────────────────────────
+  // Set of bed IDs that are linked to the currently focused room label
+  const linkedBedIds = useMemo(() => {
+    if (!focusedRoomId) return new Set();
+    return new Set(
+      furniture
+        .filter((item) => item.shape === "bed" && item.linkedRoomId === focusedRoomId)
+        .map((item) => item.id)
+    );
+  }, [focusedRoomId, furniture]);
+
+  // Name of the focused room (for the info banner)
+  const focusedRoom = useMemo(
+    () => furniture.find((item) => item.shape === "room-label" && item.id === focusedRoomId) ?? null,
+    [focusedRoomId, furniture]
+  );
+  // ─────────────────────────────────────────────────────────────────────────
+
   const bedStatusLegend = useMemo(
     () =>
       BED_STATUS_OPTIONS.map((status) => {
@@ -106,12 +126,14 @@ export default function LayoutViewerPage() {
       }),
     []
   );
+
   const toggleStatusFilter = (status) => {
     setActiveStatusFilter((prev) => (prev === status ? "All" : status));
   };
 
   const clearFocusedRoom = () => setFocusedRoomId(null);
-  const focusRoomLabel = (item) => setFocusedRoomId(item.id || null);
+  const focusRoomLabel = (item) =>
+    setFocusedRoomId((prev) => (prev === item.id ? null : item.id));
 
   const onUploadJson = (e) => {
     const file = e.target.files?.[0];
@@ -125,6 +147,7 @@ export default function LayoutViewerPage() {
         setLayout(next);
         setSourceName(file.name);
         setError("");
+        setFocusedRoomId(null);
       } catch {
         setError("Invalid JSON file. Please upload a valid exported layout JSON.");
       }
@@ -150,6 +173,7 @@ export default function LayoutViewerPage() {
         />
         {sourceName && <span className="text-sm text-gray-600">Loaded: {sourceName}</span>}
       </div>
+
       <div className="p-2">
         <div className="text-xs font-semibold text-slate-700 mb-2">Bed Status Legend</div>
         <div className="flex flex-wrap gap-2">
@@ -193,6 +217,32 @@ export default function LayoutViewerPage() {
           ))}
         </div>
       </div>
+
+      {/* ── Room focus info banner ──────────────────────────────────────── */}
+      {/* {focusedRoom ? (
+        <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-amber-50 border border-amber-300 text-sm">
+          <span className="text-amber-600 text-lg">🏠</span>
+          <span className="font-semibold text-amber-900">
+            {focusedRoom.roomLabel || "Room"}
+          </span>
+          <span className="text-amber-700">
+            — {linkedBedIds.size} linked bed{linkedBedIds.size !== 1 ? "s" : ""} highlighted
+          </span>
+          <button
+            onClick={clearFocusedRoom}
+            className="ml-auto text-xs px-2 py-0.5 rounded bg-amber-200 hover:bg-amber-300 text-amber-900 font-medium transition"
+          >
+            ✕ Clear
+          </button>
+        </div>
+      ) : (
+        furniture.some((item) => item.shape === "room-label") && (
+          <div className="text-xs text-gray-400 italic">
+            💡 Click a room label on the canvas to highlight its linked beds.
+          </div>
+        )
+      )} */}
+      {/* ─────────────────────────────────────────────────────────────────── */}
 
       {error ? <div className="text-sm text-red-600">{error}</div> : null}
 
@@ -265,16 +315,30 @@ export default function LayoutViewerPage() {
                 isFilterActive && isBed && canonicalStatus !== activeStatusFilter;
               const renderItem = mutedByFilter ? { ...item, bedStatus: "Vacant" } : item;
 
+              // Room-link highlight logic:
+              // If a room is focused:
+              //   - linked beds → highlighted (isLinkedBedHighlight = true)
+              //   - all other non-room-label items → dimmed (muted = true)
+              // If no room focused → normal rendering
+              const isRoomLabel = item.shape === "room-label";
+              const isFocusedRoom = isRoomLabel && item.id === focusedRoomId;
+              const isLinkedBedHighlight = focusedRoomId && isBed && linkedBedIds.has(item.id);
+              const isDimmedByRoomFocus =
+                focusedRoomId &&
+                !isFocusedRoom &&
+                !isLinkedBedHighlight;
+
               return (
                 <FurnitureNode
                   key={item.id || `item-${index}`}
                   item={renderItem}
                   canvasSize={size}
                   index={index}
-                  muted={mutedByFilter}
-                  isFocused={item.shape === "room-label" && item.id === focusedRoomId}
+                  muted={mutedByFilter || isDimmedByRoomFocus}
+                  isFocused={isFocusedRoom}
+                  isLinkedBedHighlight={isLinkedBedHighlight}
                   onClick={
-                    item.shape === "room-label"
+                    isRoomLabel
                       ? () => focusRoomLabel(item)
                       : undefined
                   }
