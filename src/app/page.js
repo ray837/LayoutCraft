@@ -90,6 +90,7 @@ export default function FloorEditor() {
   const [importError, setImportError] = useState("");
   const [mode, setMode] = useState("select");
   const [draftWall, setDraftWall] = useState(null);
+  const [floorNumber, setFloorNumber] = useState("");
   const selectedTables = tables.filter((t) => selectedIds.includes(t.id));
   const singleSelectedTable = selectedTables.length === 1 ? selectedTables[0] : null;
   const [labelInput, setLabelInput] = useState("");
@@ -942,6 +943,7 @@ export default function FloorEditor() {
     const payload = {
       schemaVersion: 2,
       exportedAt: new Date().toISOString(),
+      floorNumber: floorNumber.trim() || null,
       canvasPx: { width: size.width, height: size.height },
       tables: seatingTables,
       beds: bedEntries,
@@ -1037,6 +1039,7 @@ export default function FloorEditor() {
         setHistory((prev) => [...prev, { tables: cloneItems(tables), walls: cloneItems(walls) }]);
         setTables(imported.tables);
         setWalls(imported.walls);
+        setFloorNumber(String(parsed?.floorNumber ?? ""));
         setSelectedIds([]);
         setCopiedTables([]);
         setDraftWall(null);
@@ -1053,106 +1056,23 @@ export default function FloorEditor() {
 
   return (
     <div className="p-6 space-y-4">
-      <h1 className="text-2xl font-bold">Floor Layout Editor</h1>
-
-      <div className="flex gap-3 flex-wrap">
-        <button
-          onClick={() => addTable("rectangle")}
-          className="px-4 py-2 bg-blue-600 text-white rounded"
-        >
-          Rectangle Table
-        </button>
-        <button
-          onClick={() => addTable("square")}
-          className="px-4 py-2 bg-indigo-600 text-white rounded"
-        >
-          Square Table
-        </button>
-        <button
-          onClick={() => addTable("circle")}
-          className="px-4 py-2 bg-cyan-600 text-white rounded"
-        >
-          Circular Table
-        </button>
-        <button
-          onClick={() => addTable("bed")}
-          className="px-4 py-2 bg-amber-600 text-white rounded"
-        >
-          Bed
-        </button>
-        <button
-          onClick={() => addTable("stairs")}
-          className="px-4 py-2 bg-teal-700 text-white rounded"
-        >
-          Stairs
-        </button>
-        <button
-          onClick={() => addTable("room-label")}
-          className="px-4 py-2 bg-yellow-700 text-white rounded"
-        >
-          Room Label
-        </button>
-        <button
-          onClick={() => setMode((m) => (m === "draw-wall" ? "select" : "draw-wall"))}
-          className={`px-4 py-2 rounded text-white ${
-            mode === "draw-wall" ? "bg-emerald-700" : "bg-gray-700"
-          }`}
-        >
-          {mode === "draw-wall" ? "Stop Wall Draw" : "Draw Walls"}
-        </button>
-        <button
-          onClick={groupSelected}
-          disabled={selectedIds.length < 2}
-          className={`px-4 py-2 rounded text-white ${
-            selectedIds.length < 2 ? "bg-gray-400 cursor-not-allowed" : "bg-violet-700"
-          }`}
-        >
-          Group
-        </button>
-        <button
-          onClick={ungroupSelected}
-          disabled={!canUngroup}
-          className={`px-4 py-2 rounded text-white ${
-            !canUngroup ? "bg-gray-400 cursor-not-allowed" : "bg-violet-500"
-          }`}
-        >
-          Ungroup
-        </button>
-        <button
-          onClick={undoLast}
-          disabled={history.length === 0}
-          className={`px-4 py-2 rounded text-white ${
-            history.length === 0 ? "bg-gray-400 cursor-not-allowed" : "bg-rose-600"
-          }`}
-        >
-          Undo
-        </button>
-        <button
-          onClick={exportLayout}
-          className="px-4 py-2 rounded text-white bg-slate-700"
-        >
-          Export JSON
-        </button>
-        <button
-          onClick={handleImportClick}
-          className="px-4 py-2 rounded text-white bg-slate-600"
-        >
-          Import JSON
-        </button>
-        <a href="/viewer" className="px-4 py-2 rounded text-white bg-slate-900">
-          Open Viewer
-        </a>
+      
+      <div className="flex gap-12">
+         <h1 className="text-2xl font-bold">Floor Layout Editor</h1>
+             <div className="flex items-center gap-2 text-sm">
+        <span className="font-medium text-gray-700">Floor Number / Name:</span>
         <input
-          ref={importInputRef}
-          type="file"
-          accept="application/json,.json"
-          onChange={handleImportLayout}
-          className="hidden"
+          value={floorNumber}
+          onChange={(e) => setFloorNumber(e.target.value)}
+          placeholder="e.g. 1, Ground Floor, B2…"
+          className="px-2 py-1 border rounded w-52 "
         />
+        {floorNumber.trim() && (
+          <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-300 text-slate-600 text-xs font-medium">
+            Floor: {floorNumber.trim()}
+          </span>
+        )}
       </div>
-
-      {importError ? <div className="text-sm text-red-600">{importError}</div> : null}
-
       {/* ── Property Panel ────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-3 text-sm min-h-[36px]">
         {/* Label editor for any single selected item */}
@@ -1255,7 +1175,110 @@ export default function FloorEditor() {
           </button>
         ) : null}
       </div>
+      </div>
+
+      <div className="flex gap-3 flex-wrap">
+        <button
+          onClick={() => addTable("rectangle")}
+          className="px-4 py-2 bg-blue-600 text-white rounded"
+        >
+          Rectangle Table
+        </button>
+        <button
+          onClick={() => addTable("square")}
+          className="px-4 py-2 bg-indigo-600 text-white rounded"
+        >
+          Square Table
+        </button>
+        <button
+          onClick={() => addTable("circle")}
+          className="px-4 py-2 bg-cyan-600 text-white rounded"
+        >
+          Circular Table
+        </button>
+        <button
+          onClick={() => addTable("bed")}
+          className="px-4 py-2 bg-amber-600 text-white rounded"
+        >
+          Bed
+        </button>
+        <button
+          onClick={() => addTable("stairs")}
+          className="px-4 py-2 bg-teal-700 text-white rounded"
+        >
+          Stairs
+        </button>
+        <button
+          onClick={() => addTable("room-label")}
+          className="px-4 py-2 bg-yellow-700 text-white rounded"
+        >
+          Room Label
+        </button>
+        <button
+          onClick={() => setMode((m) => (m === "draw-wall" ? "select" : "draw-wall"))}
+          className={`px-4 py-2 rounded text-white ${
+            mode === "draw-wall" ? "bg-emerald-700" : "bg-gray-700"
+          }`}
+        >
+          {mode === "draw-wall" ? "Stop Wall Draw" : "Draw Walls"}
+        </button>
+        <button
+          onClick={groupSelected}
+          disabled={selectedIds.length < 2}
+          className={`px-4 py-2 rounded text-white ${
+            selectedIds.length < 2 ? "bg-gray-400 cursor-not-allowed" : "bg-violet-700"
+          }`}
+        >
+          Group
+        </button>
+        <button
+          onClick={ungroupSelected}
+          disabled={!canUngroup}
+          className={`px-4 py-2 rounded text-white ${
+            !canUngroup ? "bg-gray-400 cursor-not-allowed" : "bg-violet-500"
+          }`}
+        >
+          Ungroup
+        </button>
+        <button
+          onClick={undoLast}
+          disabled={history.length === 0}
+          className={`px-4 py-2 rounded text-white ${
+            history.length === 0 ? "bg-gray-400 cursor-not-allowed" : "bg-rose-600"
+          }`}
+        >
+          Undo
+        </button>
+        <button
+          onClick={exportLayout}
+          className="px-4 py-2 rounded text-white bg-slate-700"
+        >
+          Export JSON
+        </button>
+        <button
+          onClick={handleImportClick}
+          className="px-4 py-2 rounded text-white bg-slate-600"
+        >
+          Import JSON
+        </button>
+        <a href="/viewer" className="px-4 py-2 rounded text-white bg-slate-900">
+          Open Viewer
+        </a>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          onChange={handleImportLayout}
+          className="hidden"
+        />
+      </div>
+
+      {importError ? <div className="text-sm text-red-600">{importError}</div> : null}
+ 
       {/* ─────────────────────────────────────────────────────────────── */}
+
+      {/* Floor number input */}
+    
 
       <div className="text-sm text-gray-600">
         Mode: {mode === "draw-wall" ? "Wall Draw" : "Select"} | Tip: select beds + a room
